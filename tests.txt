@@ -1,0 +1,31 @@
+OS: Windows 11
+GPU: rx570 8gb
+CPU: AMD Ryzen 9 7900X
+Output:
+Computing 16384 Poseidon hashes in the browser / WebGPU
+CPU took 693 ms
+GPU took 5353 ms
+GPU took 2830 ms (vectorized)
+
+
+OS: Windows 11
+GPU: GTX 1050 Ti
+CPU: AMD Ryzen 9 5950X
+Output:
+Computing 16384 Poseidon hashes in the browser / WebGPU
+CPU took 641 ms
+GPU took 102 ms
+GPU took 178 ms (vectorized)
+
+
+OS: Windows 10
+GPU: Intel(R) HD Graphics 500
+CPU: Intel(R) Atom(TM) Processor E3940
+Output:
+Computing 16384 Poseidon hashes in the browser / WebGPU
+CPU took 2147 ms
+GPU took 6805 ms
+GPU took 1946 ms (vectorized)
+
+
+

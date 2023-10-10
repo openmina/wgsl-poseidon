@@ -16,95 +16,30 @@ import storage from 'bundle-text:../src/wgsl/storage.wgsl';
 import bigint from 'bundle-text:../src/wgsl/bigint.wgsl';
 import fr from 'bundle-text:../src/wgsl/fr.wgsl';
 import poseidon_t2 from 'bundle-text:../src/wgsl/poseidon_t2.wgsl';
-const shader = 
+import vectorized from 'bundle-text:../src/wgsl/vectorized.wgsl';
+
+
+const shader =
     structs + '\n' +
     storage + '\n' +
     bigint + '\n' +
     fr + '\n' +
     poseidon_t2;
 
-async function poseidon(input: BigInt) {
-    const codeOutput = document.getElementById("output");
+const shader2 = vectorized;
 
-    const constants_flat: BigInt[] = []
-
-    const t = 2
-    const constants_c = constants.default.C
-    const constants_m = constants.default.M
-
-    const num_inputs = 256 * 64;
-    const numXWorkgroups = 256;
-
-    let inputs: BigInt[] = []
-    let mont_inputs: BigInt[] = []
-
-	const p = BigInt('0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001')
+async function run_shader(device, my_shader, hasher, expectedHashes, input_bytes, constants_bytes) {
+    const p = BigInt('0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001')
     const r = BigInt('0xe0a77c19a07df2f666ea36f7879462e36fc76959f60cd29ac96341c4ffffffb')
     const ri = BigInt('0x15ebf95182c5551cc8260de4aeb85d5d090ef5a9e111ec87dc5ba0056db1194e')
-
-    for (let i = 0; i < num_inputs; i ++) {
-        const rand = BigInt('0x' + crypto.randomBytes(32).toString('hex')) % p
-        inputs.push(rand)
-        mont_inputs.push(rand * r % p)
-    }
-
-    const hasher = await buildPoseidon();
-    let expectedHashes: BigInt[] = []
-    let start = Date.now()
-    for (const input of inputs) {
-        const hash = hasher([input])
-        expectedHashes.push(hash)
-    }
-    let elapsed = Date.now() - start
-
-    codeOutput.innerHTML = "Computing " + inputs.length + " Poseidon hashes in the browser / WebGPU<br />";
-    codeOutput.innerHTML += "CPU took " + elapsed + " ms<br />"
-    
-    // Append the C constants
-    for (const c_val of constants_c[t - 2]) {
-        //inputs.push(BigInt(c_val));
-        constants_flat.push(BigInt(c_val) * r % p);
-    }
-
-    // Append the M constants
-    for (const vs of constants_m[t - 2]) {
-        for (const v_val of vs) {
-            constants_flat.push(BigInt(v_val) * r % p)
-        }
-    }
-
-    const input_bytes = new Uint8Array(bigints_to_limbs(mont_inputs).buffer);
-    const constants_bytes = new Uint8Array(bigints_to_limbs(constants_flat).buffer);
-
+    const numXWorkgroups = 256;
     const INPUT_BUFFER_SIZE = input_bytes.length;
     const CONSTANTS_BUFFER_SIZE = constants_bytes.length;
     //console.log(inputs.length, INPUT_BUFFER_SIZE)
 
-    const gpuErrMsg = "Please use a browser that has WebGPU enabled.";
-    //console.log(0)
-    // 1: request adapter and device
-    // @ts-ignore
-    if (!navigator.gpu) {
-        codeOutput.innerHTML += gpuErrMsg;
-        throw Error('WebGPU not supported.');
-    }
-
-    //console.log(1)
-
-    // @ts-ignore
-    const adapter = await navigator.gpu.requestAdapter({
-        powerPreference: 'high-performance',
-    });
-    if (!adapter) {
-        codeOutput.innerHTML += gpuErrMsg;
-        throw Error('Couldn\'t request WebGPU adapter.');
-    }
-
-    const device = await adapter.requestDevice();
-
     // 2: Create a shader module from the shader template literal
     const shaderModule = device.createShaderModule({
-        code: shader
+        code: my_shader
     });
 
     //console.log(2)
@@ -140,41 +75,41 @@ async function poseidon(input: BigInt) {
     const bindGroupLayout =
         device.createBindGroupLayout({
             entries: [
-				{
-					binding: 0,
-					// @ts-ignore
-					visibility: GPUShaderStage.COMPUTE,
-					buffer: {
-						type: "storage"
-					},
-				},
-				{
-					binding: 1,
-					// @ts-ignore
-					visibility: GPUShaderStage.COMPUTE,
-					buffer: {
-						type: "read-only-storage"
-					},
-				}
-			]
+                {
+                    binding: 0,
+                    // @ts-ignore
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage"
+                    },
+                },
+                {
+                    binding: 1,
+                    // @ts-ignore
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "read-only-storage"
+                    },
+                }
+            ]
         });
 
     const bindGroup = device.createBindGroup({
         layout: bindGroupLayout,
-		entries: [
-			{
-				binding: 0,
-				resource: {
-					buffer: storageBuffer,
-				}
-			},
-			{
-				binding: 1,
-				resource: {
-					buffer: constantsBuffer,
-				}
-			},
-		]
+        entries: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: storageBuffer,
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: constantsBuffer,
+                }
+            },
+        ]
     });
 
     const computePipeline = device.createComputePipeline({
@@ -193,7 +128,7 @@ async function poseidon(input: BigInt) {
 
     //console.log(5)
 
-    start = Date.now()
+    let start = Date.now()
     // 6: Initiate render pass
     const passEncoder = commandEncoder.beginComputePass();
 
@@ -238,20 +173,96 @@ async function poseidon(input: BigInt) {
     //console.log(8)
 
     const dataBuf = new Uint32Array(data);
-    elapsed = Date.now() - start
-
-    codeOutput.innerHTML += "GPU took " + elapsed + " ms"
+    let elapsed = Date.now() - start
 
     const results: BigInt[] = []
-    for (let i = 0; i < dataBuf.length / 16; i ++) {
+    for (let i = 0; i < dataBuf.length / 16; i++) {
         const result = BigInt(uint32ArrayToBigint(dataBuf.slice(i * 16, i * 16 + 16)))
         results.push(result * ri % p)
     }
-    for (let i = 0; i < results.length; i ++) {
+    for (let i = 0; i < results.length; i++) {
         let e = utils.leBuff2int(hasher.F.fromMontgomery(expectedHashes[i]));
         assert(results[i] === e);
     }
     assert(results.length === expectedHashes.length)
+
+    return elapsed;
+}
+
+
+async function poseidon(input: BigInt) {
+    const codeOutput = document.getElementById("output");
+    const constants_flat: BigInt[] = []
+    const t = 2
+    const constants_c = constants.default.C
+    const constants_m = constants.default.M
+    const num_inputs = 256 * 64;
+
+    let inputs: BigInt[] = []
+    let mont_inputs: BigInt[] = []
+    const p = BigInt('0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001')
+    const r = BigInt('0xe0a77c19a07df2f666ea36f7879462e36fc76959f60cd29ac96341c4ffffffb')
+    const ri = BigInt('0x15ebf95182c5551cc8260de4aeb85d5d090ef5a9e111ec87dc5ba0056db1194e')
+
+    for (let i = 0; i < num_inputs; i++) {
+        const rand = BigInt('0x' + crypto.randomBytes(32).toString('hex')) % p
+        inputs.push(rand)
+        mont_inputs.push(rand * r % p)
+    }
+
+    const hasher = await buildPoseidon();
+    let expectedHashes: BigInt[] = []
+    let start = Date.now()
+    for (const input of inputs) {
+        const hash = hasher([input])
+        expectedHashes.push(hash)
+    }
+    let elapsed = Date.now() - start
+
+    codeOutput.innerHTML = "Computing " + inputs.length + " Poseidon hashes in the browser / WebGPU<br />";
+    codeOutput.innerHTML += "CPU took " + elapsed + " ms<br />"
+
+    // Append the C constants
+    for (const c_val of constants_c[t - 2]) {
+        //inputs.push(BigInt(c_val));
+        constants_flat.push(BigInt(c_val) * r % p);
+    }
+
+    // Append the M constants
+    for (const vs of constants_m[t - 2]) {
+        for (const v_val of vs) {
+            constants_flat.push(BigInt(v_val) * r % p)
+        }
+    }
+
+    const input_bytes = new Uint8Array(bigints_to_limbs(mont_inputs).buffer);
+    const constants_bytes = new Uint8Array(bigints_to_limbs(constants_flat).buffer);
+    const gpuErrMsg = "Please use a browser that has WebGPU enabled.";
+    //console.log(0)
+    // 1: request adapter and device
+    // @ts-ignore
+    if (!navigator.gpu) {
+        codeOutput.innerHTML += gpuErrMsg;
+        throw Error('WebGPU not supported.');
+    }
+
+    //console.log(1)
+
+    // @ts-ignore
+    const adapter = await navigator.gpu.requestAdapter({
+        powerPreference: 'high-performance',
+    });
+    if (!adapter) {
+        codeOutput.innerHTML += gpuErrMsg;
+        throw Error('Couldn\'t request WebGPU adapter.');
+    }
+
+    const device = await adapter.requestDevice();
+
+    elapsed = await run_shader(device, shader, hasher, expectedHashes, input_bytes, constants_bytes);
+    codeOutput.innerHTML += "GPU took " + elapsed + " ms\n";
+    elapsed = await run_shader(device, shader2, hasher, expectedHashes, input_bytes, constants_bytes);
+    codeOutput.innerHTML += "GPU took " + elapsed + " ms (vectorized)";
 }
 
 // From msm-webgpu
@@ -271,9 +282,9 @@ const bytes_to_bigints = (limbs: Uint8Array): BigInt[] => {
 
     let chunks: Number[][] = []
     // Split limbs into chunks of 32
-    for (let i = 0; i < limbs.length / 32; i ++) {
+    for (let i = 0; i < limbs.length / 32; i++) {
         let chunk: Number[] = []
-        for (let j = 0; j < 32; j ++) {
+        for (let j = 0; j < 32; j++) {
             chunk.push(limbs[i * 32 + j]);
         }
         chunks.push(chunk);
@@ -303,9 +314,9 @@ const bigint_to_limbs = (val: BigInt): Uint32Array => {
 const bigints_to_limbs = (vals: BigInt[]): Uint32Array => {
     const result = new Uint32Array(vals.length * 16);
 
-    for (let i = 0; i < vals.length; i ++ ) {
+    for (let i = 0; i < vals.length; i++) {
         const limbs = bigint_to_limbs(vals[i]);
-        for (let j = 0; j < limbs.length; j ++ ) {
+        for (let j = 0; j < limbs.length; j++) {
             result[i * 16 + j] = limbs[j];
         }
     }
